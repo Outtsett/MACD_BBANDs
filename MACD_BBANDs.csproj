@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Platforms>AnyCPU</Platforms>
+    <AlgoType>Strategy</AlgoType>
+    <AssemblyName>MACD_BBANDs</AssemblyName>
+    <RootNamespace>MACD_BBANDs</RootNamespace>
+    <StartAction>Program</StartAction>
+    <StartProgram>C:\Quantower\TradingPlatform\v1.144.9\Console.StarterNew.exe</StartProgram>
+    <StartArguments>--address 127.0.0.1 --port 53548</StartArguments>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <OutputPath>C:\Quantower\TradingPlatform\v1.144.9\..\..\Settings\Scripts\Strategies\MACD_BBANDs</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <OutputPath>C:\Quantower\TradingPlatform\v1.144.9\..\..\Settings\Scripts\Strategies\MACD_BBANDs</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="TradingPlatform.BusinessLayer">
+      <HintPath>C:\Quantower\TradingPlatform\v1.144.9\bin\TradingPlatform.BusinessLayer.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

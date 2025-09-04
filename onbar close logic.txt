@@ -1,0 +1,614 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using TradingPlatform.BusinessLayer;
+
+namespace BB_MACD_Strategy
+{
+    public class BB_MACD_Strategy : Strategy
+    {
+        [InputParameter("Symbol", 0)]
+        public Symbol CurrentSymbol { get; set; }
+
+        [InputParameter("Account", 1)]
+        public Account CurrentAccount { get; set; }
+
+        [InputParameter("Quantity", 2, 1, 99999, 1, 2)]
+        public double Quantity { get; set; } = 1;
+
+        [InputParameter("Start Point", 3)]
+        public DateTime StartPoint { get; set; } = DateTime.UtcNow.AddMonths(-3);
+
+        [InputParameter("BB Period", 4, 1, 100, 1, 2)]
+        public int BBPeriod { get; set; } = 20;
+
+        [InputParameter("BB Deviation", 5, 0.1, 5, 0.1, 2)]
+        public double BBDeviation { get; set; } = 2.0;
+
+        [InputParameter("MACD Fast Period", 6, 1, 100, 1, 2)]
+        public int MACDFastPeriod { get; set; } = 12;
+
+        [InputParameter("MACD Slow Period", 7, 1, 100, 1, 2)]
+        public int MACDSlowPeriod { get; set; } = 26;
+
+        [InputParameter("MACD Signal Period", 8, 1, 50, 1, 2)]
+        public int MACDSignalPeriod { get; set; } = 9;
+
+        // RSI and OSMA input parameters
+        [InputParameter("RSI Period", 9, 1, 100, 1, 2)]
+        public int RSIPeriod { get; set; } = 14;
+
+        [InputParameter("OSMA Fast Period", 10, 1, 100, 1, 2)]
+        public int OSMAFastPeriod { get; set; } = 12;
+
+        [InputParameter("OSMA Slow Period", 11, 1, 100, 1, 2)]
+        public int OSMASlowPeriod { get; set; } = 26;
+
+        [InputParameter("OSMA Signal Period", 12, 1, 50, 1, 2)]
+        public int OSMASignalPeriod { get; set; } = 9;
+
+        // ATR multipliers
+        [InputParameter("ATR Stop Loss Multiplier", 13, 0.1, 10, 0.25, 2)]
+        public double AtrStopLossMultiplier { get; set; } = 1.25;
+
+        [InputParameter("ATR Take Profit Multiplier", 14, 0.1, 10, 0.25, 2)]
+        public double AtrTakeProfitMultiplier { get; set; } = 0.25;
+
+        // NEW: CCI Period
+        [InputParameter("CCI Period", 15, 1, 100, 1, 2)]
+        public int CCIPeriod { get; set; } = 20;
+
+        // Historical data
+        private HistoricalData hdm5m;
+        private HistoricalData hdm1m;
+
+        // Indicators for 5m
+        private Indicator bbIndicator5m;
+        private Indicator macdIndicator5m;
+        private Indicator osmaIndicator5m;
+        private Indicator rsiIndicator5m;
+        private Indicator atrIndicator5m;
+        private Indicator cciIndicator5m;  // NEW
+
+        // Indicators for 1m
+        private Indicator bbIndicator1m;
+        private Indicator macdIndicator1m;
+        private Indicator osmaIndicator1m;
+        private Indicator rsiIndicator1m;
+        private Indicator cciIndicator1m;  // NEW
+
+        private bool orderPlaced = false;
+
+        public BB_MACD_Strategy()
+        {
+            this.Name = "BB_MACD_Strategy (OnTick-like)";
+            this.Description = "Multi-timeframe strategy: logic triggered by 5m bar updates (similar to Intraday script).";
+        }
+
+        protected override void OnRun()
+        {
+            // Ensure Symbol and Account are specified
+            if (this.CurrentSymbol == null || this.CurrentAccount == null)
+            {
+                this.LogError("Please specify both a Symbol and an Account.");
+                this.Stop();
+                return;
+            }
+
+            // Load historical data
+            hdm5m = CurrentSymbol.GetHistory(Period.MIN5, StartPoint);
+            hdm1m = CurrentSymbol.GetHistory(Period.MIN1, StartPoint);
+
+            if (hdm5m == null || hdm1m == null || hdm5m.Count < MACDSlowPeriod || hdm1m.Count < MACDSlowPeriod)
+            {
+                this.LogError("Failed to load sufficient historical data.");
+                this.Stop();
+                return;
+            }
+
+            // Subscribe to bar-close events
+            hdm5m.NewHistoryItem += Hdm5m_NewHistoryItem;
+            hdm1m.NewHistoryItem += Hdm1m_NewHistoryItem;
+
+            // Subscribe to position events
+            Core.Instance.PositionAdded   += Core_PositionAdded;
+            Core.Instance.PositionRemoved += Core_PositionRemoved;
+
+            this.Log($"Subscribed to NewHistoryItem events. Loaded 5m Bars={hdm5m.Count}, 1m Bars={hdm1m.Count}", StrategyLoggingLevel.Trading);
+
+            // Initialize and add indicators
+            try
+            {
+                if (hdm5m.Count < MACDSlowPeriod || hdm1m.Count < MACDSlowPeriod)
+                {
+                    this.LogError("Insufficient historical bars for MACD initialization.");
+                    this.Stop();
+                    return;
+                }
+
+                // -- 5m Indicators
+                bbIndicator5m     = Core.Indicators.BuiltIn.BB(BBPeriod, BBDeviation, PriceType.Close, MaMode.SMA);
+                macdIndicator5m   = Core.Indicators.BuiltIn.MACD(MACDFastPeriod, MACDSlowPeriod, MACDSignalPeriod);
+                osmaIndicator5m   = Core.Indicators.BuiltIn.OsMA(OSMAFastPeriod, OSMASlowPeriod, OSMASignalPeriod);
+                rsiIndicator5m    = Core.Indicators.BuiltIn.RSI(RSIPeriod, PriceType.Close, RSIMode.Simple, MaMode.EMA, RSIPeriod);
+                atrIndicator5m    = Core.Indicators.BuiltIn.ATR(14, MaMode.SMA);
+                cciIndicator5m    = Core.Indicators.BuiltIn.CCI(CCIPeriod); // NEW
+
+                hdm5m.AddIndicator(bbIndicator5m);
+                hdm5m.AddIndicator(macdIndicator5m);
+                hdm5m.AddIndicator(osmaIndicator5m);
+                hdm5m.AddIndicator(rsiIndicator5m);
+                hdm5m.AddIndicator(atrIndicator5m);
+                hdm5m.AddIndicator(cciIndicator5m);  // NEW
+
+                // -- 1m Indicators
+                bbIndicator1m   = Core.Indicators.BuiltIn.BB(BBPeriod, BBDeviation, PriceType.Close, MaMode.SMA);
+                macdIndicator1m = Core.Indicators.BuiltIn.MACD(MACDFastPeriod, MACDSlowPeriod, MACDSignalPeriod);
+                osmaIndicator1m = Core.Indicators.BuiltIn.OsMA(OSMAFastPeriod, OSMASlowPeriod, OSMASignalPeriod);
+                rsiIndicator1m  = Core.Indicators.BuiltIn.RSI(RSIPeriod, PriceType.Close, RSIMode.Simple, MaMode.EMA, RSIPeriod);
+                cciIndicator1m  = Core.Indicators.BuiltIn.CCI(CCIPeriod); // NEW
+
+                hdm1m.AddIndicator(bbIndicator1m);
+                hdm1m.AddIndicator(macdIndicator1m);
+                hdm1m.AddIndicator(osmaIndicator1m);
+                hdm1m.AddIndicator(rsiIndicator1m);
+                hdm1m.AddIndicator(cciIndicator1m); // NEW
+
+                this.Log("All indicators successfully initialized and added to historical data.", StrategyLoggingLevel.Trading);
+            }
+            catch (Exception ex)
+            {
+                this.LogError($"Error initializing indicators: {ex.Message}");
+                this.Stop();
+            }
+        }
+
+        private void Hdm5m_NewHistoryItem(object sender, HistoryEventArgs e)
+        {
+            OnBarClose(hdm5m, Period.MIN5);
+        }
+
+        private void Hdm1m_NewHistoryItem(object sender, HistoryEventArgs e)
+        {
+            OnBarClose(hdm1m, Period.MIN1);
+        }
+
+        // Dictionary to track the cumulative quantity filled for each Position ID
+        private Dictionary<string, double> positionQuantities = new Dictionary<string, double>();
+
+        private void Core_PositionAdded(Position position)
+        {
+            // Ensure the position matches the current symbol and account
+            if (position.Symbol != this.CurrentSymbol || position.Account != this.CurrentAccount)
+                return;
+
+            // Initialize or update cumulative tracking
+            if (!positionQuantities.ContainsKey(position.Id))
+                positionQuantities[position.Id] = 0;
+
+            positionQuantities[position.Id] += position.Quantity;
+
+            // Check if the cumulative quantity matches or exceeds the intended position size
+            if (positionQuantities[position.Id] < this.Quantity)
+            {
+                this.Log($"Partial fill for Position {position.Id}. Current quantity: {positionQuantities[position.Id]}. Waiting for full fill.", StrategyLoggingLevel.Trading);
+                return;
+            }
+
+            // Once fully filled => place SL/TP
+            var (stopLossPrice, takeProfitPrice) = CalculateSLTP(position);
+
+            // Stop-Loss
+            var stopLossOrderResult = Core.Instance.PlaceOrder(new PlaceOrderRequestParameters
+            {
+                Account      = this.CurrentAccount,
+                Symbol       = this.CurrentSymbol,
+                Side         = (position.Side == Side.Buy ? Side.Sell : Side.Buy),
+                OrderTypeId  = OrderType.Stop,
+                Quantity     = this.Quantity,
+                TriggerPrice = stopLossPrice,
+                TimeInForce  = TimeInForce.GTC
+            });
+            if (stopLossOrderResult.Status == TradingOperationResultStatus.Failure)
+                this.LogError($"Failed to place Stop-Loss at {stopLossPrice:F2}: {stopLossOrderResult.Message}");
+
+            // Take-Profit
+            var takeProfitOrderResult = Core.Instance.PlaceOrder(new PlaceOrderRequestParameters
+            {
+                Account      = this.CurrentAccount,
+                Symbol       = this.CurrentSymbol,
+                Side         = (position.Side == Side.Buy ? Side.Sell : Side.Buy),
+                OrderTypeId  = OrderType.Limit,
+                Quantity     = this.Quantity,
+                Price        = takeProfitPrice,
+                TimeInForce  = TimeInForce.GTC
+            });
+            if (takeProfitOrderResult.Status == TradingOperationResultStatus.Failure)
+                this.LogError($"Failed to place Take-Profit at {takeProfitPrice:F2}: {takeProfitOrderResult.Message}");
+
+            this.Log($"Position fully filled => SL @ {stopLossPrice:F2}, TP @ {takeProfitPrice:F2}", StrategyLoggingLevel.Trading);
+
+            // Reset quantity tracking
+            positionQuantities.Remove(position.Id);
+        }
+
+        private void Core_PositionRemoved(Position position)
+        {
+            if (position.Symbol == CurrentSymbol && position.Account == CurrentAccount)
+            {
+                orderPlaced = false;
+                this.Log($"Position removed => Side={position.Side}, Qty={position.Quantity}, Price={position.OpenPrice:F2}",
+                         StrategyLoggingLevel.Trading);
+
+                // Cleanup leftover Stop/Limit orders
+                var leftoverOrders = Core.Instance.Orders
+                    .Where(o => o.Symbol == CurrentSymbol &&
+                                o.Account == CurrentAccount &&
+                               (o.OrderTypeId == OrderType.Stop || o.OrderTypeId == OrderType.Limit))
+                    .ToList();
+                foreach (var ord in leftoverOrders)
+                {
+                    var cancelResult = ord.Cancel();
+                    if (cancelResult.Status == TradingOperationResultStatus.Success)
+                        this.Log($"Canceled leftover {ord.OrderTypeId} @ {ord.Price:F2}", StrategyLoggingLevel.Trading);
+                    else
+                        this.LogError($"Failed to cancel leftover {ord.OrderTypeId} => {cancelResult.Message}");
+                }
+            }
+        }
+
+        private void OnBarClose(HistoricalData hdm, Period period)
+        {
+            // Ensure indicators are ready
+            if (bbIndicator5m == null || macdIndicator5m == null || osmaIndicator5m == null || rsiIndicator5m == null ||
+                bbIndicator1m == null || macdIndicator1m == null || osmaIndicator1m == null || rsiIndicator1m == null ||
+                cciIndicator5m == null || cciIndicator1m == null)  // NEW check for CCI too
+            {
+                this.Log("Indicators are not properly initialized. Skipping bar close logic.", StrategyLoggingLevel.Trading);
+                return;
+            }
+
+            // Ensure enough bars
+            int maxPeriod = Math.Max(BBPeriod, Math.Max(MACDSlowPeriod, Math.Max(RSIPeriod, CCIPeriod)));
+            if (hdm.Count < maxPeriod)
+            {
+                this.Log($"Insufficient historical data for {period} timeframe. Skipping bar close logic.", StrategyLoggingLevel.Trading);
+                return;
+            }
+
+            // 1) If we already placed an order on this bar, skip
+            if (orderPlaced)
+            {
+                this.Log("An order is already placed. Skipping bar close logic.", StrategyLoggingLevel.Trading);
+                return;
+            }
+
+            // 2) If there's already an open position, skip
+            var activePosition = Core.Instance.Positions
+                .FirstOrDefault(p => p.Account == CurrentAccount && p.Symbol == CurrentSymbol);
+            if (activePosition != null)
+            {
+                this.Log("Open position exists for this Symbol/Account. Skipping new trade signals.", StrategyLoggingLevel.Trading);
+                return;
+            }
+
+            // Only run logic on the 5m timeframe
+            if (period != Period.MIN5)
+                return;
+
+            try
+            {
+                // --- 5m Data (using the most recently closed bar) ---
+                var closedBar5m = (HistoryItemBar)hdm5m[1];
+                double price5m = closedBar5m.Close;
+
+                double bbMid5m       = bbIndicator5m.GetValue(0, 0);
+                double bbUpper5m     = bbIndicator5m.GetValue(0, 1);
+                double bbLower5m     = bbIndicator5m.GetValue(0, 2);
+                double macdVal5m     = macdIndicator5m.GetValue(0, 0);
+                double macdSignal5m  = macdIndicator5m.GetValue(0, 1);
+                double rsiVal5m      = rsiIndicator5m.GetValue(0);
+                double rsiMaVal5m    = rsiIndicator5m.GetValue(1);
+                double osmaVal5m     = osmaIndicator5m.GetValue(0);
+                double prevOsmaVal5m = osmaIndicator5m.GetValue(1);
+
+                // NEW: CCI(5m)
+                double cciVal5m      = cciIndicator5m.GetValue(0);
+                double prevCciVal5m  = cciIndicator5m.GetValue(1);
+
+                double prevClose5m = ((HistoryItemBar)hdm5m[2]).Close; // bar before last closed
+
+                // --- 1m Data ---
+                if (hdm1m.Count < maxPeriod)
+                {
+                    this.Log("Insufficient 1-minute data. Skipping trade entry.", StrategyLoggingLevel.Trading);
+                    return;
+                }
+                var closedBar1m = (HistoryItemBar)hdm1m[1];
+                double price1m = closedBar1m.Close;
+
+                double bbMid1m       = bbIndicator1m.GetValue(0, 0);
+                double bbUpper1m     = bbIndicator1m.GetValue(0, 1);
+                double bbLower1m     = bbIndicator1m.GetValue(0, 2);
+                double macdVal1m     = macdIndicator1m.GetValue(0, 0);
+                double macdSignal1m  = macdIndicator1m.GetValue(0, 1);
+                double rsiVal1m      = rsiIndicator1m.GetValue(0);
+                double rsiMaVal1m    = rsiIndicator1m.GetValue(1);
+                double osmaVal1m     = osmaIndicator1m.GetValue(0);
+                double prevOsmaVal1m = osmaIndicator1m.GetValue(1);
+
+                // NEW: CCI(1m)
+                double cciVal1m      = cciIndicator1m.GetValue(0);
+                double prevCciVal1m  = cciIndicator1m.GetValue(1);
+
+                double prevClose1m = ((HistoryItemBar)hdm1m[2]).Close;
+
+                // --------------------------------------------------
+                // LOG indicator values (optional but handy for debug)
+                // --------------------------------------------------
+                this.Log($"[5m] Price={price5m:F3}, BBMid={bbMid5m:F3}, MACD={macdVal5m:F3}, MACDSignal={macdSignal5m:F3}, " +
+                         $"OSMA={osmaVal5m:F3}, OSMA_Prev={prevOsmaVal5m:F3}, RSI={rsiVal5m:F3}, RSI_MA={rsiMaVal5m:F3}, " +
+                         $"CCI={cciVal5m:F3}, PrevCCI={prevCciVal5m:F3}",
+                         StrategyLoggingLevel.Trading);
+
+                this.Log($"[1m] Price={price1m:F3}, BBMid={bbMid1m:F3}, MACD={macdVal1m:F3}, MACDSignal={macdSignal1m:F3}, " +
+                         $"OSMA={osmaVal1m:F3}, OSMA_Prev={prevOsmaVal1m:F3}, RSI={rsiVal1m:F3}, RSI_MA={rsiMaVal1m:F3}, " +
+                         $"CCI={cciVal1m:F3}, PrevCCI={prevCciVal1m:F3}",
+                         StrategyLoggingLevel.Trading);
+
+                // -----------------------------------------
+                // Define your conditions (1,3,4,5,6, etc.)
+                // -----------------------------------------
+
+                // Condition #6 (LONG) + CCI logic:  
+                //  - OSMA(1m) up  
+                //  - MACD(5m) > signal  
+                //  - MACD(1m) > signal  
+                //  - price(5m) > BB mid  
+                //  - CCI(1m) > previous CCI(1m) && CCI(1m) > 100
+                bool cond6Long =
+                    (osmaVal1m > prevOsmaVal1m) &&
+                    (macdVal5m > macdSignal5m) &&
+                    (macdVal1m > macdSignal1m) &&
+                    (price5m > bbMid5m) &&
+                    (cciVal1m > prevCciVal1m) &&
+                    (cciVal1m > 100);
+
+                // Condition #6 (SHORT) opposite + CCI logic:  
+                //  - OSMA(1m) down  
+                //  - MACD(5m) < signal  
+                //  - MACD(1m) < signal  
+                //  - price(5m) < BB mid  
+                //  - CCI(1m) < previous CCI(1m) && CCI(1m) < 100
+                bool cond6ShortOpp =
+                    (osmaVal1m < prevOsmaVal1m) &&
+                    (macdVal5m < macdSignal5m) &&
+                    (macdVal1m < macdSignal1m) &&
+                    (price5m < bbMid5m) &&
+                    (cciVal1m < prevCciVal1m) &&
+                    (cciVal1m < 100);
+
+                // (The rest of your conditions remain unchanged below.)
+
+                // Condition #1 (Short)
+                bool cond1Short =
+                    (rsiVal1m < rsiMaVal1m) &&
+                    (macdVal1m < macdSignal1m && macdVal1m < 0 && macdSignal1m < 0) &&
+                    (price1m < prevClose1m) &&
+                    (price5m < bbMid5m);
+
+                bool cond1LongOpp =
+                    (rsiVal1m > rsiMaVal1m) &&
+                    (macdVal1m > macdSignal1m && macdVal1m > 0 && macdSignal1m > 0) &&
+                    (price1m > prevClose1m) &&
+                    (price5m > bbMid5m);
+
+                // Condition #3 (Short)
+                bool cond3Short =
+                    (price1m < bbMid1m && prevClose1m >= bbMid1m) &&
+                    (rsiVal1m < rsiMaVal1m) &&
+                    (osmaVal5m < prevOsmaVal5m) &&
+                    (macdVal1m < macdSignal1m) &&
+                    (macdVal1m < 0 && macdSignal1m < 0);
+
+                bool cond3LongOpp =
+                    (price1m > bbMid1m && prevClose1m <= bbMid1m) &&
+                    (rsiVal1m > rsiMaVal1m) &&
+                    (osmaVal5m > prevOsmaVal5m) &&
+                    (macdVal1m > macdSignal1m) &&
+                    (macdVal1m > 0 && macdSignal1m > 0);
+
+                // Condition #4 (Long)
+                bool cond4Long =
+                    (rsiVal1m > rsiMaVal1m) &&
+                    (rsiVal1m < 30) &&
+                    (osmaVal1m > prevOsmaVal1m) &&
+                    (osmaVal5m > prevOsmaVal5m) &&
+                    (macdVal1m > macdSignal1m);
+
+                bool cond4ShortOpp =
+                    (rsiVal1m < rsiMaVal1m) &&
+                    (rsiVal1m > 70) &&
+                    (osmaVal1m < prevOsmaVal1m) &&
+                    (osmaVal5m < prevOsmaVal5m) &&
+                    (macdVal1m < macdSignal1m);
+
+                // Condition #5 (Long)
+                bool priceRising5m      = (price5m > prevClose5m);
+                bool osmaIncreasing1m   = (osmaVal1m > prevOsmaVal1m);
+                bool macdAboveSignal1m  = (macdVal1m > macdSignal1m);
+                bool rsiAboveMaAnd50_1m = (rsiVal1m > rsiMaVal1m && rsiVal1m > 50);
+                bool osmaIncreasing5m   = (osmaVal5m > prevOsmaVal5m);
+                bool rsiAboveMa5m       = (rsiVal5m > rsiMaVal5m);
+
+                bool cond5Long =
+                    priceRising5m &&
+                    osmaIncreasing1m &&
+                    macdAboveSignal1m &&
+                    rsiAboveMaAnd50_1m &&
+                    osmaIncreasing5m &&
+                    rsiAboveMa5m;
+
+                // Condition #5 (Short)
+                bool priceFalling5m      = (price5m < prevClose5m);
+                bool osmaDecreasing1m    = (osmaVal1m < prevOsmaVal1m);
+                bool macdBelowSignal1m   = (macdVal1m < macdSignal1m);
+                bool rsiBelowMaAnd50_1m  = (rsiVal1m < rsiMaVal1m && rsiVal1m < 50);
+                bool osmaDecreasing5m    = (osmaVal5m < prevOsmaVal5m);
+                bool rsiBelowMa5m        = (rsiVal5m < rsiMaVal5m);
+
+                bool cond5ShortOpp =
+                    priceFalling5m &&
+                    osmaDecreasing1m &&
+                    macdBelowSignal1m &&
+                    rsiBelowMaAnd50_1m &&
+                    osmaDecreasing5m &&
+                    rsiBelowMa5m;
+
+                // ------------------------------------------------
+                // Priority check #6, then #1..#5 as in your script
+                // ------------------------------------------------
+                if (cond6Long)
+                {
+                    this.Log("[LONG] Condition #6 triggered (with CCI > prev, > 100).", StrategyLoggingLevel.Trading);
+                    PlaceMarketOrder(Side.Buy);
+                    orderPlaced = true;
+                }
+                else if (cond6ShortOpp)
+                {
+                    this.Log("[SHORT] Condition #6 Opposite triggered (with CCI < prev, < 100).", StrategyLoggingLevel.Trading);
+                    PlaceMarketOrder(Side.Sell);
+                    orderPlaced = true;
+                }
+                else
+                {
+                    // If Condition #6 not met, proceed with the other conditions...
+                    if (cond1Short)
+                    {
+                        this.Log("[SHORT] Condition #1 triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Sell);
+                        orderPlaced = true;
+                    }
+                    else if (cond1LongOpp)
+                    {
+                        this.Log("[LONG] Condition #1 Opposite triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Buy);
+                        orderPlaced = true;
+                    }
+                    else if (cond3Short)
+                    {
+                        this.Log("[SHORT] Condition #3 triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Sell);
+                        orderPlaced = true;
+                    }
+                    else if (cond3LongOpp)
+                    {
+                        this.Log("[LONG] Condition #3 Opposite triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Buy);
+                        orderPlaced = true;
+                    }
+                    else if (cond4Long)
+                    {
+                        this.Log("[LONG] Condition #4 triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Buy);
+                        orderPlaced = true;
+                    }
+                    else if (cond4ShortOpp)
+                    {
+                        this.Log("[SHORT] Condition #4 Opposite triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Sell);
+                        orderPlaced = true;
+                    }
+                    else if (cond5Long)
+                    {
+                        this.Log("[LONG] Condition #5 triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Buy);
+                        orderPlaced = true;
+                    }
+                    else if (cond5ShortOpp)
+                    {
+                        this.Log("[SHORT] Condition #5 Opposite triggered.", StrategyLoggingLevel.Trading);
+                        PlaceMarketOrder(Side.Sell);
+                        orderPlaced = true;
+                    }
+                    else
+                    {
+                        this.Log("[NO TRADE] None of the conditions matched.", StrategyLoggingLevel.Trading);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                this.LogError($"Error processing OnBarClose for {period}: {ex.Message}");
+            }
+        }
+
+        private void PlaceMarketOrder(Side side)
+        {
+            var result = Core.Instance.PlaceOrder(new PlaceOrderRequestParameters
+            {
+                Account     = this.CurrentAccount,
+                Symbol      = this.CurrentSymbol,
+                Side        = side,
+                Quantity    = this.Quantity,
+                OrderTypeId = OrderType.Market,
+                TimeInForce = TimeInForce.GTC
+            });
+
+            if (result.Status == TradingOperationResultStatus.Success)
+            {
+                this.Log($"[INFO] Market order placed => {side}", StrategyLoggingLevel.Trading);
+                orderPlaced = true;
+            }
+            else
+            {
+                this.LogError($"Market order failed => {result.Message}");
+            }
+        }
+
+        private (double stopLossPrice, double takeProfitPrice) CalculateSLTP(Position position)
+        {
+            double atrVal5m = atrIndicator5m.GetValue(1); // last closed bar
+            if (double.IsNaN(atrVal5m) || atrVal5m <= 0)
+            {
+                this.LogError("Invalid ATR value. Unable to calculate SL and TP.");
+                return (0, 0);
+            }
+
+            double stop, take;
+            if (position.Side == Side.Buy)
+            {
+                stop = position.OpenPrice - (atrVal5m * this.AtrStopLossMultiplier);
+                take = position.OpenPrice + (atrVal5m * this.AtrTakeProfitMultiplier);
+            }
+            else
+            {
+                stop = position.OpenPrice + (atrVal5m * this.AtrStopLossMultiplier);
+                take = position.OpenPrice - (atrVal5m * this.AtrTakeProfitMultiplier);
+            }
+
+            stop = AlignToTickSize(stop);
+            take = AlignToTickSize(take);
+            return (stop, take);
+        }
+
+        private double AlignToTickSize(double rawPrice)
+        {
+            double tickSize = CurrentSymbol?.TickSize ?? 0.01;
+            return Math.Round(rawPrice / tickSize) * tickSize;
+        }
+
+        protected override void OnStop()
+        {
+            if (hdm5m != null)
+                hdm5m.NewHistoryItem -= Hdm5m_NewHistoryItem;
+            if (hdm1m != null)
+                hdm1m.NewHistoryItem -= Hdm1m_NewHistoryItem;
+
+            Core.Instance.PositionAdded   -= Core_PositionAdded;
+            Core.Instance.PositionRemoved -= Core_PositionRemoved;
+
+            Log("Strategy stopped and unsubscribed from events.", StrategyLoggingLevel.Trading);
+        }
+    }
+}

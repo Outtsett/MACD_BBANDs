@@ -1,0 +1,196 @@
+bool rsiAboveMa1m = (rsiVal1m > rsiMaVal1m);
+bool macdCrossedUpBelow0 = (macdVal1m > macdSignal1m && macdVal1m < 0);
+bool priceDecreasing1m = (closedBar1m.Close < hdm1m[2].Close);   // Compare last two closes on 1m
+bool priceBelowMid5m = (price5m < bbMid5m);
+
+bool shortCondition1 =
+    rsiAboveMa1m &&
+    macdCrossedUpBelow0 &&
+    priceDecreasing1m &&
+    priceBelowMid5m;
+
+if (shortCondition1)
+{
+    // Enter Short
+    this.Log("[SHORT] Condition #1 met: RSI > MA, MACD crossing up but <0, price decreasing, price below BB mid(5m).", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Sell);
+    orderPlaced = true;
+}
+
+bool rsiAboveMa1m = (rsiVal1m > rsiMaVal1m);
+bool macdAboveSignal1m = (macdVal1m > macdSignal1m);
+bool osmaRising5m = (osmaVal5m > prevOsmaVal5m);
+
+bool longCondition2 =
+    rsiAboveMa1m &&
+    macdAboveSignal1m &&
+    osmaRising5m;
+
+if (longCondition2)
+{
+    // Enter Long
+    this.Log("[LONG] Condition #2 met: RSI > MA, MACD > Signal(1m), OSMA(5m) rising.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Buy);
+    orderPlaced = true;
+}
+bool priceCrossedBelowMid1m = (price1m < bbMid1m)
+    && ((HistoryItemBar)hdm1m[2]).Close >= bbMid1m; // e.g. was above midline on previous bar, now below
+bool rsiBelowMa1m = (rsiVal1m < rsiMaVal1m);
+bool osmaDecreasing5m = (osmaVal5m < prevOsmaVal5m);
+bool macdBelowSignal = (macdVal1m < macdSignal1m); // or use 5m, depending on your exact text
+
+bool shortCondition3 =
+    priceCrossedBelowMid1m &&
+    rsiBelowMa1m &&
+    osmaDecreasing5m &&
+    macdBelowSignal;
+
+if (shortCondition3)
+{
+    // Enter Short
+    this.Log("[SHORT] Condition #3 met: Price below mid(1m), RSI < MA, OSMA(5m) decreasing, MACD < signal.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Sell);
+    orderPlaced = true;
+}
+bool rsiAboveMa1m = (rsiVal1m > rsiMaVal1m);
+bool rsiOversold1m = (rsiVal1m < 30); // or whatever threshold you use
+bool osmaIncreasing1m = (osmaVal1m > prevOsmaVal1m);
+bool osmaRising5m = (osmaVal5m > prevOsmaVal5m);
+
+bool longCondition4 =
+    rsiAboveMa1m &&
+    rsiOversold1m &&
+    osmaIncreasing1m &&
+    osmaRising5m;
+
+if (longCondition4)
+{
+    // Enter Long
+    this.Log("[LONG] Condition #4 met: RSI oversold + above MA(1m), OSMA(1m) up, OSMA(5m) rising.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Buy);
+    orderPlaced = true;
+}
+// 5-minute price rising (compare last closed bar to previous)
+bool priceRising5m = ((HistoryItemBar)hdm5m[1]).Close > ((HistoryItemBar)hdm5m[2]).Close;
+bool osmaIncreasing1m = (osmaVal1m > prevOsmaVal1m);
+bool macdAboveSignal1m = (macdVal1m > macdSignal1m);
+bool rsiAboveMaAnd50_1m = (rsiVal1m > rsiMaVal1m && rsiVal1m > 50);
+bool osmaIncreasing5m = (osmaVal5m > prevOsmaVal5m);
+
+// "Some distance from BB mid(5m)" is subjective. For example:
+double distanceFromMid5m = Math.Abs(price5m - bbMid5m);
+bool safeDistance5m = distanceFromMid5m > (0.005 * price5m); // e.g. 0.5% away from mid band
+bool rsiAboveMa5m = (rsiVal5m > rsiMaVal5m);
+
+// Combine them all:
+bool bullishCondition5 =
+    priceRising5m        &&
+    osmaIncreasing1m     &&
+    macdAboveSignal1m    &&
+    rsiAboveMaAnd50_1m   &&
+    osmaIncreasing5m     &&
+    safeDistance5m       &&
+    rsiAboveMa5m;
+
+if (bullishCondition5)
+{
+    // Enter Long
+    this.Log("[LONG] Condition #5 all bullish checks passed.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Buy);
+    orderPlaced = true;
+}
+bool rsiBelowMa1m = (rsiVal1m < rsiMaVal1m);
+bool macdCrossedDownAbove0 = (macdVal1m < macdSignal1m && macdVal1m > 0);
+bool priceIncreasing1m = (closedBar1m.Close > hdm1m[2].Close);
+bool priceAboveMid5m = (price5m > bbMid5m);
+
+bool longConditionOpp1 =
+    rsiBelowMa1m &&
+    macdCrossedDownAbove0 &&
+    priceIncreasing1m &&
+    priceAboveMid5m;
+
+if (longConditionOpp1)
+{
+    this.Log("[LONG - Opp #1] RSI < MA, MACD crossing down but >0, price increasing, price above BB mid(5m).", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Buy);
+    orderPlaced = true;
+}
+bool rsiBelowMa1m = (rsiVal1m < rsiMaVal1m);
+bool macdBelowSignal1m = (macdVal1m < macdSignal1m);
+bool osmaFalling5m = (osmaVal5m < prevOsmaVal5m);
+
+bool shortConditionOpp2 =
+    rsiBelowMa1m &&
+    macdBelowSignal1m &&
+    osmaFalling5m;
+
+if (shortConditionOpp2)
+{
+    this.Log("[SHORT - Opp #2] RSI < MA, MACD < signal(1m), OSMA(5m) falling.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Sell);
+    orderPlaced = true;
+}
+bool priceCrossedAboveMid1m = (price1m > bbMid1m)
+    && ((HistoryItemBar)hdm1m[2]).Close <= bbMid1m;
+bool rsiCrossedAboveMa1m = (rsiVal1m > rsiMaVal1m)
+    && (rsiIndicator1m.GetValue(1) <= rsiIndicator1m.GetValue(1, 1)); // example check
+bool osmaIncreasing5m = (osmaVal5m > prevOsmaVal5m);
+bool macdAboveSignal1m = (macdVal1m > macdSignal1m);
+
+bool longConditionOpp3 =
+    priceCrossedAboveMid1m &&
+    rsiCrossedAboveMa1m &&
+    osmaIncreasing5m &&
+    macdAboveSignal1m;
+
+if (longConditionOpp3)
+{
+    this.Log("[LONG - Opp #3] Price above mid(1m), RSI > MA, OSMA(5m) increasing, MACD > signal.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Buy);
+    orderPlaced = true;
+}
+bool rsiBelowMa1m = (rsiVal1m < rsiMaVal1m);
+// "Overbought" typically means RSI > 70 or 80, adjust to your preference:
+bool rsiOverbought1m = (rsiVal1m > 70);
+bool osmaDecreasing1m = (osmaVal1m < prevOsmaVal1m);
+bool osmaFalling5m = (osmaVal5m < prevOsmaVal5m);
+
+bool shortConditionOpp4 =
+    rsiBelowMa1m &&
+    rsiOverbought1m &&
+    osmaDecreasing1m &&
+    osmaFalling5m;
+
+if (shortConditionOpp4)
+{
+    this.Log("[SHORT - Opp #4] RSI overbought + below MA(1m), OSMA(1m) down, OSMA(5m) falling.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Sell);
+    orderPlaced = true;
+}
+bool priceFalling5m = ((HistoryItemBar)hdm5m[1]).Close < ((HistoryItemBar)hdm5m[2]).Close;
+bool osmaDecreasing1m = (osmaVal1m < prevOsmaVal1m);
+bool macdBelowSignal1m = (macdVal1m < macdSignal1m);
+bool rsiBelowMaAndUnder50_1m = (rsiVal1m < rsiMaVal1m && rsiVal1m < 50);
+
+// Opposite of “some distance above BB mid” is “some distance below BB mid.”
+double distanceFromMid5m = Math.Abs(price5m - bbMid5m);
+bool safeDistanceBelow5m = (price5m < bbMid5m - 0.005 * price5m);
+bool osmaDecreasing5m = (osmaVal5m < prevOsmaVal5m);
+bool rsiBelowMa5m = (rsiVal5m < rsiMaVal5m);
+
+bool shortConditionOpp5 =
+    priceFalling5m           &&
+    osmaDecreasing1m         &&
+    macdBelowSignal1m        &&
+    rsiBelowMaAndUnder50_1m  &&
+    safeDistanceBelow5m      &&
+    osmaDecreasing5m         &&
+    rsiBelowMa5m;
+
+if (shortConditionOpp5)
+{
+    this.Log("[SHORT - Opp #5] 5m price falling, OSMA(1m) down, MACD < signal(1m), RSI < MA & < 50(1m), distance below BB mid(5m), OSMA(5m) down, RSI(5m) < MA.", StrategyLoggingLevel.Trading);
+    PlaceMarketOrder(Side.Sell);
+    orderPlaced = true;
+}
